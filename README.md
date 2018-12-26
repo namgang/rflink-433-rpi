@@ -6,3 +6,5 @@ It then analyzes and extracts the message.
 A *message* is a command intended to be acted on by a remotely controlled device.
 
 Another program (tx433) can take those messages and transmit them.
+
+The net effect is that instead of manual button pushes on your remote you get programmatic control through your Raspberry-Pi.
