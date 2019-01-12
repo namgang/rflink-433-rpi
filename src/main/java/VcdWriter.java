@@ -1,6 +1,7 @@
 import java.io.*;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 
@@ -29,9 +30,32 @@ public class VcdWriter {
     
     /**
      * Construct from signal data.
+     * Ensure that the timings are strictly increasing and that
+     * signals are alternating, i.e. no consecutive signals with the same value.
+     * SIDE EFFECT: Might reorder the input list.
      */
-    public VcdWriter(List<Edge> data) {
-	this.data = data;
+    public VcdWriter(List<Edge> list) {
+	// Make sure the list is sorted.
+	Collections.sort(list);
+	data = new ArrayList<Edge>();
+	int discardCount = 0;
+	// Eliminate consecutive edges with the same signal.
+	Edge previousEdge = null;
+	for (Edge edge : list) {
+	    if (previousEdge == null) {
+		data.add(edge);
+	    } else if (!edge.sameSign(previousEdge)) {
+		data.add(edge);
+	    } else {
+		++discardCount;
+		// DEBUG
+		// System.out.println("Discard: " + edge.timeMicros);
+	    }
+
+	    previousEdge = edge;
+	}
+
+	System.out.println("Edges: " + data.size() + " after discarding " + discardCount);
     }
 
     /**
@@ -162,43 +186,19 @@ public class VcdWriter {
     }
 
     private void doWritePulse(PrintWriter pw) throws IOException {
-	int idx = 0;
 	// Trying to make indexing as obvious as possible.
-	while (idx < size()) {
+	for (int idx = 0; idx + 2 < size(); idx += 2) {
 	    // For some reason there may be multiple edges in the same direction.
 	    // Like several consecutive falling edges.
-	    idx = nextEdge(idx, 1);
-	    if (idx < 0) break;
 	    Edge firstEdge = data.get(idx);
-	    idx = nextEdge(idx, 0);
-	    if (idx < 0) break;
-	    Edge secondEdge = data.get(idx);
-	    idx = nextEdge(idx, 1);
-	    if (idx < 0) break;
-	    Edge thirdEdge = data.get(idx);
+	    Edge secondEdge = data.get(idx + 1);
+	    Edge thirdEdge = data.get(idx + 2);
 
 	    long highDuration = secondEdge.timeMicros - firstEdge.timeMicros;
 	    long lowDuration = thirdEdge.timeMicros - secondEdge.timeMicros;
 	    pw.println(String.format("%8d; %5d; %5d", firstEdge.timeMicros,
 				     highDuration, lowDuration));
 	}
-    }
-
-    /**
-     * Find the next edge with a given value.
-     * @param fromIdx must be the index to start from,
-     * @param value must be the signal value to look for,
-     * @return the index of the next edge satisfying the condition
-     * (could be fromIdx), or -1 no such edge exists.
-     */
-    private int nextEdge(int fromIdx, int value) {
-	int idx = fromIdx;
-	Edge edge = data.get(idx);
-	while (edge.signal != value && idx + 1 < size()) {
-	    edge = data.get(++idx);
-	}
-
-	return (edge.signal == value)? idx : -1;
     }
 
     /**
