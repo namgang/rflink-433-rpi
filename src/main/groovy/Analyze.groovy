@@ -12,7 +12,7 @@ import groovy.transform.MapConstructor
 
 CLEAN = '.clean'
 PULSE = '.pulse'
-NEXA = ~/S([01]{64})P/
+NEXA = ~/S([01]{56,68})P/
 
 /**
  * Analyze a pulse file.
@@ -34,8 +34,8 @@ def doit(String filename) {
   def cleanList = postProcessAndWrite(filename, buffer)
   def stats = computeStatistics(cleanList)
   printStats(stats)
-  List<String> messages = printMessages(cleanList)
-  printNexa(messages)
+  List<String> messages = generateMessages(cleanList)
+  //printNexa(messages)
 }
 
 /**
@@ -129,10 +129,12 @@ def printStats(Map data) {
   Thisis.values().each {category ->
     if (category == Thisis.FAIL) return
     def entry = data[category]
-    println "${category} (${entry.count}) ------------"
-    def times = computeStats(entry, category)
-    println "High: ${times.minHigh} .. ${times.maxHigh} (${times.avgHigh})"
-    println " Low: ${times.minLow} .. ${times.maxLow} (${times.avgLow})"
+    if (entry) {
+      println "${category} (${entry.count}) ------------"
+      def times = computeStats(entry, category)
+      println "High: ${times.minHigh} .. ${times.maxHigh} (${times.avgHigh})"
+      println " Low: ${times.minLow} .. ${times.maxLow} (${times.avgLow})"
+    }
   }
 }
 
@@ -157,20 +159,23 @@ private int avg(int min, int max) {
 }
 
 /**
- * Print what we consider the messages after distilling.
+ * Generate a list of what we consider the messages after distilling.
  */
-private List<String> printMessages(List<Token> list) {
+private List<String> generateMessages(List<Token> list) {
   def sb = new StringBuilder()
   boolean active = false
   int messageIndex = 0
+  int timestamp = -1
   def output = []
   list.each {token ->
+    if (timestamp < 0) timestamp = token.timestamp
     if (token.sync) {
       active = true
       if (sb.length() > 0) {
-	message = messageOutput(++messageIndex, sb)
+	message = messageOutput(++messageIndex, timestamp, sb)
 	output << message
 	sb.length = 0
+	timestamp = -1
       }
     }
 
@@ -190,7 +195,7 @@ private List<String> printMessages(List<Token> list) {
   }
 
   if (sb.length() > 0) {
-    def message = messageOutput(++messageIndex, sb)
+    def message = messageOutput(++messageIndex, timestamp, sb)
     output << message
   }
 
@@ -198,8 +203,34 @@ private List<String> printMessages(List<Token> list) {
 }
 
 /**
+ * Compose string messages.
+ * @param idx must be the 1-based sequential index of the message,
+ * @param tstamp must be the microsecond timestamp of the first
+ * event in the message,
+ * @param sb must be a StringBuilder where the message has been composed,
+ * @return a string message.
+ */
+private String messageOutput(int idx, int tstamp, StringBuilder sb) {
+  String msg = sb.toString().replaceAll(~/SS/, 'S').replaceAll(~/PP/, 'P')
+  def m = NEXA.matcher(msg)
+  String line
+  if (m.matches()) {
+    def bits = m.group(1)
+    hex = hexMessage(bits)
+    hex = "<S${hex}P>"
+    line = String.format('%2d (%7d): %s (%d)', idx, tstamp, hex, bits.size())
+  } else {
+    line = String.format('%2d (%7d): %s (%d)', idx, tstamp, msg, msg.size() - 2)
+  }
+
+  println line
+  return line
+}
+
+/**
  * Print what we consider to be NEXA message candidates, if any.
  * There may be more than one.
+ * @deprecated
  */
 private printNexa(List<String> messages) {
   def counter = [:]
@@ -231,32 +262,52 @@ private printNexa(List<String> messages) {
     println "    ${msg} (${msg.size()})"
     def m = NEXA.matcher(msg)
     if (m.matches()) {
-      def hex = Long.parseUnsignedLong(m.group(1), 2)
+      def hex = hexMessage(m.group(1))
       println "   <S${hex}P>"
     }
   }
 }
 
-private String messageOutput(int idx, StringBuilder sb) {
-  String msg = sb.toString().replaceAll(~/SS/, 'S').replaceAll(~/PP/, 'P')
-  println String.format('%2d: %s', idx, msg)
-  return msg
+/**
+ * Print a binary string as hex with the following important constraint:
+ * Work from left to right, add any left over bits after a dot.
+ * The left to right method makes it easier to compare results visually.
+ */
+private String hexMessage(String binary) {
+  def suffix = binary.size() % 4
+  def bits = binary
+  def oddbits = ''
+  if (suffix != 0) {
+    oddbits = bits.substring(bits.size() - suffix)
+    ++suffix
+    bits = bits[0..-suffix]
+  }
+
+  int idx = 0
+  def sb = new StringBuilder()
+  while (idx + 4 <= bits.size()) {
+    String slice = bits.substring(idx, idx + 4)
+    idx += 4
+    sb.append(Integer.toHexString(Integer.parseUnsignedInt(slice, 2)))
+  }
+
+  return oddbits? "${sb}.${oddbits}" : sb.toString()
 }
 
 boolean isZero(Map sig) {
-  sig.high in 210..310 && sig.low in 210..340
+  sig.high in 200..320 && sig.low in 200..320
 }
 
 boolean isOne(Map sig) {
-  sig.high in 210..310 && sig.low in 1220..1400
+  sig.high in 200..320 && sig.low in 1200..1400
 }
 
 boolean isPause(Map sig) {
-  sig.high in 210..310 && sig.low > 9000
+  sig.high in 200..320 && sig.low > 9000
 }
 
 boolean isSync(Map sig) {
-  sig.high in 210..310 && sig.low in 2500..2850
+  sig.high in 200..320 && sig.low in 2500..2850
 }
 
 enum Thisis {
